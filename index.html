@@ -3,66 +3,147 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Lector NFC Bebidas</title>
+    <title>Recarga de Bebidas</title>
     <style>
-        body { font-family: sans-serif; text-align: center; padding: 20px; background-color: #f0f2f5; }
-        .card { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-        button { background-color: #0070f3; color: white; border: none; padding: 15px 30px; font-size: 18px; border-radius: 8px; cursor: pointer; margin-top: 20px; width: 100%; }
-        button:disabled { background-color: #ccc; }
-        #log { margin-top: 20px; font-weight: bold; color: #333; }
+        body { 
+            font-family: 'Segoe UI', sans-serif; 
+            text-align: center; 
+            padding: 20px; 
+            background-color: #f4f4f9; 
+            color: #333;
+        }
+        .container { 
+            max-width: 500px; 
+            margin: 0 auto; 
+            background: white; 
+            padding: 30px; 
+            border-radius: 20px; 
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1); 
+        }
+        h1 { font-size: 2.5rem; margin-bottom: 5px; }
+        .subtitle { color: #666; margin-bottom: 30px; font-size: 1.1rem;}
+        
+        /* Grid para los botones */
+        .grid-botones {
+            display: grid;
+            grid-template-columns: 1fr 1fr; /* Dos columnas */
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .btn-credito {
+            background-color: #fff;
+            border: 2px solid #0070f3;
+            color: #0070f3;
+            padding: 20px;
+            font-size: 1.2rem;
+            font-weight: bold;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        /* Efecto al pulsar o seleccionar */
+        .btn-credito:active, .btn-credito.seleccionado {
+            background-color: #0070f3;
+            color: white;
+            transform: scale(0.98);
+        }
+
+        #status-area {
+            margin-top: 30px;
+            padding: 20px;
+            border-radius: 10px;
+            background-color: #eee;
+            display: none; /* Oculto al principio */
+        }
+        
+        .loader { font-size: 2rem; }
     </style>
 </head>
 <body>
-    <div class="card">
-        <h1>🍺 Auto-Bebidas</h1>
-        <p>Acerca tu tarjeta para añadir saldo.</p>
-        <button id="scanBtn">ACTIVAR LECTOR NFC</button>
-        <p id="log">Esperando...</p>
+
+    <div class="container">
+        <h1>🍺</h1>
+        <h3>Autoservicio de Bebidas</h3>
+        <p class="subtitle">Por favor seleccione una opción de recarga:</p>
+
+        <div class="grid-botones">
+            <button class="btn-credito" onclick="activarLectura(1)">1 Crédito</button>
+            <button class="btn-credito" onclick="activarLectura(5)">5 Créditos</button>
+            <button class="btn-credito" onclick="activarLectura(10)">10 Créditos</button>
+            <button class="btn-credito" onclick="activarLectura(20)">20 Créditos</button>
+        </div>
+
+        <div id="status-area">
+            <div id="mensaje"></div>
+        </div>
     </div>
 
     <script>
-        const log = document.getElementById("log");
-        const btn = document.getElementById("scanBtn");
+        let cantidadSeleccionada = 0;
+        const statusArea = document.getElementById('status-area');
+        const mensaje = document.getElementById('mensaje');
 
-        btn.addEventListener("click", async () => {
-            log.textContent = "Usuario tocó el botón. Iniciando...";
+        async function activarLectura(cantidad) {
+            // Guardamos la cantidad elegida
+            cantidadSeleccionada = cantidad;
             
+            // Mostramos feedback visual
+            statusArea.style.display = 'block';
+            statusArea.style.backgroundColor = '#e3f2fd'; // Azulito claro
+            mensaje.innerHTML = `<span class="loader">📲</span><br><strong>Recargando ${cantidad} Créditos</strong><br>Acerca tu tarjeta NFC al móvil...`;
+
+            // Verificamos si el navegador soporta NFC
             if (!("NDEFReader" in window)) {
-                log.textContent = "❌ Tu móvil/navegador no soporta NFC Web. Usa Chrome en Android.";
+                mensaje.innerText = "❌ Error: Este navegador no soporta NFC. Usa Chrome en Android.";
+                statusArea.style.backgroundColor = '#ffcdd2';
                 return;
             }
 
             try {
+                // Activamos el lector
                 const ndef = new NDEFReader();
                 await ndef.scan();
-                log.textContent = "📡 Acerca la tarjeta al dorso del móvil now...";
 
-                ndef.addEventListener("reading", async ({ serialNumber }) => {
-                    log.textContent = `Tarjeta detectada: ${serialNumber}. Procesando...`;
+                // Escuchamos cuando pasa la tarjeta
+                ndef.onreading = async ({ serialNumber }) => {
+                    mensaje.innerHTML = "🔄 Tarjeta detectada... Procesando...";
                     
-                    // Llamamos a nuestro servidor (backend)
-                    try {
-                        const response = await fetch('/api/scan', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ serialNumber })
-                        });
-                        const data = await response.json();
-                        
-                        if(data.success) {
-                            log.innerHTML = `✅ ¡ÉXITO!<br>Tarjeta: ${serialNumber}<br>Nuevo Saldo: ${data.nuevosCreditos}`;
-                        } else {
-                            log.textContent = "❌ Error en base de datos: " + data.error;
-                        }
-                    } catch (err) {
-                        log.textContent = "❌ Error de conexión: " + err.message;
-                    }
-                });
+                    // Enviamos los datos al servidor
+                    await enviarDatos(serialNumber, cantidadSeleccionada);
+                };
 
             } catch (error) {
-                log.textContent = "❌ Error al iniciar NFC: " + error;
+                mensaje.innerText = "❌ Error al iniciar lector: " + error;
             }
-        });
+        }
+
+        async function enviarDatos(idTarjeta, cantidad) {
+            try {
+                const res = await fetch('/api/scan', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ 
+                        serialNumber: idTarjeta, 
+                        cantidad: cantidad 
+                    })
+                });
+
+                const data = await res.json();
+
+                if (data.success) {
+                    statusArea.style.backgroundColor = '#c8e6c9'; // Verde
+                    mensaje.innerHTML = `✅ <strong>¡RECARGA EXITOSA!</strong><br>Tarjeta: ${idTarjeta}<br>Se añadieron ${cantidad} créditos.<br>Saldo Total: ${data.nuevosCreditos}`;
+                } else {
+                    throw new Error(data.error);
+                }
+
+            } catch (err) {
+                statusArea.style.backgroundColor = '#ffcdd2'; // Rojo
+                mensaje.innerText = "❌ Error guardando en base de datos: " + err.message;
+            }
+        }
     </script>
 </body>
 </html>
