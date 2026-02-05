@@ -23,10 +23,9 @@
         h1 { font-size: 2.5rem; margin-bottom: 5px; }
         .subtitle { color: #666; margin-bottom: 30px; font-size: 1.1rem;}
         
-        /* Grid para los botones */
         .grid-botones {
             display: grid;
-            grid-template-columns: 1fr 1fr; /* Dos columnas */
+            grid-template-columns: 1fr 1fr;
             gap: 15px;
             margin-bottom: 20px;
         }
@@ -43,11 +42,19 @@
             transition: all 0.2s;
         }
 
-        /* Efecto al pulsar o seleccionar */
-        .btn-credito:active, .btn-credito.seleccionado {
+        .btn-credito:active {
             background-color: #0070f3;
             color: white;
             transform: scale(0.98);
+        }
+        
+        /* Estilo para deshabilitar botones mientras lee */
+        .btn-credito:disabled {
+            background-color: #e0e0e0;
+            border-color: #ccc;
+            color: #999;
+            cursor: not-allowed;
+            transform: none;
         }
 
         #status-area {
@@ -55,7 +62,7 @@
             padding: 20px;
             border-radius: 10px;
             background-color: #eee;
-            display: none; /* Oculto al principio */
+            display: none;
         }
         
         .loader { font-size: 2rem; }
@@ -69,10 +76,10 @@
         <p class="subtitle">Por favor seleccione una opción de recarga:</p>
 
         <div class="grid-botones">
-            <button class="btn-credito" onclick="activarLectura(1)">1 Crédito</button>
-            <button class="btn-credito" onclick="activarLectura(5)">5 Créditos</button>
-            <button class="btn-credito" onclick="activarLectura(10)">10 Créditos</button>
-            <button class="btn-credito" onclick="activarLectura(20)">20 Créditos</button>
+            <button class="btn-credito" onclick="iniciarProceso(1)">1 Crédito</button>
+            <button class="btn-credito" onclick="iniciarProceso(5)">5 Créditos</button>
+            <button class="btn-credito" onclick="iniciarProceso(10)">10 Créditos</button>
+            <button class="btn-credito" onclick="iniciarProceso(20)">20 Créditos</button>
         </div>
 
         <div id="status-area">
@@ -81,41 +88,59 @@
     </div>
 
     <script>
-        let cantidadSeleccionada = 0;
+        // Variable global para controlar el lector (el interruptor)
+        let nfcController; 
+
         const statusArea = document.getElementById('status-area');
         const mensaje = document.getElementById('mensaje');
+        const botones = document.querySelectorAll('.btn-credito');
 
-        async function activarLectura(cantidad) {
-            // Guardamos la cantidad elegida
-            cantidadSeleccionada = cantidad;
-            
-            // Mostramos feedback visual
+        async function iniciarProceso(cantidad) {
+            // 1. Bloquear botones para que no pulsen otro mientras lee
+            toggleBotones(false);
+
             statusArea.style.display = 'block';
-            statusArea.style.backgroundColor = '#e3f2fd'; // Azulito claro
+            statusArea.style.backgroundColor = '#e3f2fd';
             mensaje.innerHTML = `<span class="loader">📲</span><br><strong>Recargando ${cantidad} Créditos</strong><br>Acerca tu tarjeta NFC al móvil...`;
 
-            // Verificamos si el navegador soporta NFC
             if (!("NDEFReader" in window)) {
                 mensaje.innerText = "❌ Error: Este navegador no soporta NFC. Usa Chrome en Android.";
                 statusArea.style.backgroundColor = '#ffcdd2';
+                toggleBotones(true);
                 return;
             }
 
-            try {
-                // Activamos el lector
-                const ndef = new NDEFReader();
-                await ndef.scan();
+            // 2. Si había un lector encendido antes (por error), lo apagamos
+            if (nfcController) {
+                nfcController.abort();
+            }
+            // Creamos un nuevo controlador para esta sesión
+            nfcController = new AbortController();
 
-                // Escuchamos cuando pasa la tarjeta
+            try {
+                const ndef = new NDEFReader();
+                
+                // 3. Activamos el lector pasando la señal del controlador
+                await ndef.scan({ signal: nfcController.signal });
+
                 ndef.onreading = async ({ serialNumber }) => {
-                    mensaje.innerHTML = "🔄 Tarjeta detectada... Procesando...";
+                    // 4. ¡AQUÍ ESTÁ LA CLAVE! 
+                    // En cuanto leemos UNA vez, cortamos el lector inmediatamente.
+                    nfcController.abort(); 
                     
-                    // Enviamos los datos al servidor
-                    await enviarDatos(serialNumber, cantidadSeleccionada);
+                    mensaje.innerHTML = "🔄 Tarjeta detectada. Guardando...";
+                    
+                    // Procesamos el pago
+                    await enviarDatos(serialNumber, cantidad);
                 };
 
             } catch (error) {
-                mensaje.innerText = "❌ Error al iniciar lector: " + error;
+                // Si el error es "AbortError" significa que lo apagamos nosotros (es bueno), así que lo ignoramos
+                if (error.name === 'AbortError') {
+                    return; 
+                }
+                mensaje.innerText = "❌ Error o Cancelado: " + error;
+                toggleBotones(true); // Reactivar botones si falló
             }
         }
 
@@ -133,16 +158,25 @@
                 const data = await res.json();
 
                 if (data.success) {
-                    statusArea.style.backgroundColor = '#c8e6c9'; // Verde
-                    mensaje.innerHTML = `✅ <strong>¡RECARGA EXITOSA!</strong><br>Tarjeta: ${idTarjeta}<br>Se añadieron ${cantidad} créditos.<br>Saldo Total: ${data.nuevosCreditos}`;
+                    statusArea.style.backgroundColor = '#c8e6c9'; 
+                    mensaje.innerHTML = `✅ <strong>¡RECARGA EXITOSA!</strong><br>Tarjeta: ${idTarjeta}<br>+${cantidad} créditos.<br>Saldo Total: ${data.nuevosCreditos}`;
                 } else {
                     throw new Error(data.error);
                 }
 
             } catch (err) {
-                statusArea.style.backgroundColor = '#ffcdd2'; // Rojo
-                mensaje.innerText = "❌ Error guardando en base de datos: " + err.message;
+                statusArea.style.backgroundColor = '#ffcdd2'; 
+                mensaje.innerText = "❌ Error guardando: " + err.message;
+            } finally {
+                // 5. Al terminar todo (bien o mal), reactivamos los botones
+                toggleBotones(true);
             }
+        }
+
+        function toggleBotones(activar) {
+            botones.forEach(btn => {
+                btn.disabled = !activar;
+            });
         }
     </script>
 </body>
