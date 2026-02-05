@@ -64,7 +64,6 @@
             display: none;
         }
         
-        /* Input invisible para capturar el lector USB */
         #usb-input {
             opacity: 0;
             position: absolute;
@@ -105,32 +104,57 @@
         const botones = document.querySelectorAll('.btn-credito');
         const usbInput = document.getElementById('usb-input');
 
+        // --- FUNCIÓN MÁGICA DE CONVERSIÓN ---
+        // Convierte "4031034980" en "64:b6:44:f0"
+        function convertirUsbAMovil(decimalStr) {
+            try {
+                // 1. Convertir texto a número entero
+                let numero = BigInt(decimalStr); // Usamos BigInt por si el número es muy grande
+                
+                // 2. Convertir a Hexadecimal
+                let hex = numero.toString(16);
+                
+                // 3. Asegurar que tiene longitud par (rellenar con 0 a la izquierda si falta)
+                if (hex.length % 2 !== 0) hex = "0" + hex;
+
+                // 4. Separar en pares (bytes)
+                let pares = [];
+                for (let i = 0; i < hex.length; i += 2) {
+                    pares.push(hex.substring(i, i + 2));
+                }
+
+                // 5. Invertir el orden (La magia para que coincida)
+                pares.reverse();
+
+                // 6. Unir con dos puntos y devolver
+                return pares.join(':').toLowerCase();
+            } catch (e) {
+                console.error("Error convirtiendo formato USB:", e);
+                return decimalStr; // Si falla, devolvemos el original
+            }
+        }
+
         async function iniciarProceso(cantidad) {
             cantidadSeleccionada = cantidad;
             toggleBotones(false);
             
-            // Limpiamos input USB por si acaso
             usbInput.value = ""; 
 
             statusArea.style.display = 'block';
             statusArea.style.backgroundColor = '#e3f2fd';
 
-            // 1. COMPROBACIÓN: ¿Es Android (NFC Nativo) o PC (USB)?
             if ("NDEFReader" in window) {
-                // --- MODO ANDROID / MÓVIL ---
+                // MODO MÓVIL
                 mensaje.innerHTML = `<span class="loader">📲</span><br><strong>Recargando ${cantidad} Créditos</strong><br>Acerca tarjeta al móvil...`;
                 activarModoMovil(cantidad);
             } else {
-                // --- MODO PC / WINDOWS ---
+                // MODO PC
                 modoUSB = true;
                 mensaje.innerHTML = `<span class="loader">💻</span><br><strong>Recargando ${cantidad} Créditos</strong><br>Pasa la tarjeta por el lector USB...`;
-                
-                // Ponemos el foco en el input invisible para que el lector escriba ahí
                 usbInput.focus();
             }
         }
 
-        // --- LÓGICA PARA MÓVIL (Igual que antes) ---
         async function activarModoMovil(cantidad) {
             if (nfcController) nfcController.abort();
             nfcController = new AbortController();
@@ -151,29 +175,35 @@
             }
         }
 
-        // --- LÓGICA PARA PC (Escuchar teclado/USB) ---
-        // El lector USB funciona escribiendo el código y pulsando ENTER
+        // LÓGICA USB ACTUALIZADA
         usbInput.addEventListener("keydown", async function(event) {
             if (!modoUSB) return;
 
-            // Si el lector pulsa ENTER, significa que terminó de leer
             if (event.key === "Enter") {
-                const codigoLeido = usbInput.value.trim(); // Cogemos lo que escribió el lector
+                const codigoLeido = usbInput.value.trim();
+                
                 if (codigoLeido.length > 0) {
-                    mensaje.innerHTML = "🔄 Tarjeta USB detectada. Guardando...";
-                    usbInput.blur(); // Quitamos foco para no leer doble
-                    await enviarDatos(codigoLeido, cantidadSeleccionada);
-                    modoUSB = false; // Apagamos modo USB
+                    mensaje.innerHTML = "🔄 Tarjeta USB detectada. Procesando...";
+                    usbInput.blur();
+                    
+                    // APLICAMOS LA CONVERSIÓN AQUÍ
+                    // Si son solo números y es largo, asumimos que es el formato decimal del lector USB
+                    let codigoFinal = codigoLeido;
+                    if (/^\d+$/.test(codigoLeido) && codigoLeido.length > 5) {
+                        codigoFinal = convertirUsbAMovil(codigoLeido);
+                        console.log(`Convertido ${codigoLeido} a ${codigoFinal}`);
+                    }
+
+                    await enviarDatos(codigoFinal, cantidadSeleccionada);
+                    modoUSB = false;
                 }
             }
         });
         
-        // Mantener el foco en el input invisible si el usuario hace click fuera sin querer
         document.addEventListener("click", function() {
             if (modoUSB) usbInput.focus();
         });
 
-        // --- ENVÍO DE DATOS (Común para ambos) ---
         async function enviarDatos(idTarjeta, cantidad) {
             try {
                 const res = await fetch('/api/scan', {
