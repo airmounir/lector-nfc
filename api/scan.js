@@ -1,6 +1,5 @@
 const sql = require('mssql');
 
-// Configuración de la conexión (usaremos variables de entorno por seguridad)
 const config = {
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
@@ -9,44 +8,42 @@ const config = {
     port: parseInt(process.env.DB_PORT),
     options: {
         encrypt: true,
-        trustServerCertificate: true // Necesario para algunos servidores cloud
+        trustServerCertificate: true
     }
 };
 
 export default async function handler(req, res) {
     if (req.method !== 'POST') {
-        return res.status(405).json({ error: 'Solo se permite método POST' });
+        return res.status(405).json({ error: 'Solo POST' });
     }
 
-    const { serialNumber } = req.body;
+    // AHORA RECIBIMOS TAMBIÉN LA CANTIDAD
+    const { serialNumber, cantidad } = req.body;
 
-    if (!serialNumber) {
-        return res.status(400).json({ error: 'Falta el número de serie' });
+    if (!serialNumber || !cantidad) {
+        return res.status(400).json({ error: 'Faltan datos' });
     }
 
     try {
-        // Conectar a SQL Server
         let pool = await sql.connect(config);
 
-        // Lógica: Si existe, suma 1 crédito. Si no, crea la tarjeta con 1 crédito.
+        // Usamos @cantidad en la consulta SQL en lugar de un "1" fijo
         const result = await pool.request()
             .input('id', sql.NVarChar, serialNumber)
+            .input('cantidad', sql.Int, cantidad) // Aquí definimos la variable
             .query(`
                 MERGE INTO Tarjetas AS Target
                 USING (SELECT @id AS ID) AS Source
                 ON (Target.ID = Source.ID)
                 WHEN MATCHED THEN
-                    UPDATE SET Creditos = Creditos + 1, UltimoUso = GETDATE()
+                    UPDATE SET Creditos = Creditos + @cantidad, UltimoUso = GETDATE()
                 WHEN NOT MATCHED THEN
-                    INSERT (ID, Creditos, UltimoUso) VALUES (@id, 1, GETDATE());
+                    INSERT (ID, Creditos, UltimoUso) VALUES (@id, @cantidad, GETDATE());
                 
                 SELECT Creditos FROM Tarjetas WHERE ID = @id;
             `);
 
-        // Devolver el nuevo saldo
         const nuevosCreditos = result.recordset[0].Creditos;
-        
-        // Cerrar conexión (opcional en serverless, pero buena práctica)
         await pool.close();
 
         return res.status(200).json({ success: true, nuevosCreditos });
