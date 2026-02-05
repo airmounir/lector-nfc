@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lector NFC Bebidas</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; padding: 20px; background-color: #f0f2f5; }
+        .card { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        button { background-color: #0070f3; color: white; border: none; padding: 15px 30px; font-size: 18px; border-radius: 8px; cursor: pointer; margin-top: 20px; width: 100%; }
+        button:disabled { background-color: #ccc; }
+        #log { margin-top: 20px; font-weight: bold; color: #333; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>🍺 Auto-Bebidas</h1>
+        <p>Acerca tu tarjeta para añadir saldo.</p>
+        <button id="scanBtn">ACTIVAR LECTOR NFC</button>
+        <p id="log">Esperando...</p>
+    </div>
+
+    <script>
+        const log = document.getElementById("log");
+        const btn = document.getElementById("scanBtn");
+
+        btn.addEventListener("click", async () => {
+            log.textContent = "Usuario tocó el botón. Iniciando...";
+            
+            if (!("NDEFReader" in window)) {
+                log.textContent = "❌ Tu móvil/navegador no soporta NFC Web. Usa Chrome en Android.";
+                return;
+            }
+
+            try {
+                const ndef = new NDEFReader();
+                await ndef.scan();
+                log.textContent = "📡 Acerca la tarjeta al dorso del móvil now...";
+
+                ndef.addEventListener("reading", async ({ serialNumber }) => {
+                    log.textContent = `Tarjeta detectada: ${serialNumber}. Procesando...`;
+                    
+                    // Llamamos a nuestro servidor (backend)
+                    try {
+                        const response = await fetch('/api/scan', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ serialNumber })
+                        });
+                        const data = await response.json();
+                        
+                        if(data.success) {
+                            log.innerHTML = `✅ ¡ÉXITO!<br>Tarjeta: ${serialNumber}<br>Nuevo Saldo: ${data.nuevosCreditos}`;
+                        } else {
+                            log.textContent = "❌ Error en base de datos: " + data.error;
+                        }
+                    } catch (err) {
+                        log.textContent = "❌ Error de conexión: " + err.message;
+                    }
+                });
+
+            } catch (error) {
+                log.textContent = "❌ Error al iniciar NFC: " + error;
+            }
+        });
+    </script>
+</body>
+</html>
