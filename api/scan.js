@@ -1,4 +1,5 @@
 const sql = require('mssql');
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 
 const config = {
     user: process.env.DB_USER,
@@ -6,31 +7,33 @@ const config = {
     server: process.env.DB_SERVER, 
     database: process.env.DB_NAME,
     port: parseInt(process.env.DB_PORT),
-    options: {
-        encrypt: true,
-        trustServerCertificate: true
-    }
+    options: { encrypt: true, trustServerCertificate: true }
 };
 
 export default async function handler(req, res) {
-    if (req.method !== 'POST') {
-        return res.status(405).json({ error: 'Solo POST' });
-    }
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Solo POST' });
 
-    // AHORA RECIBIMOS TAMBIÉN LA CANTIDAD
-    const { serialNumber, cantidad } = req.body;
+    const { serialNumber, cantidad, sessionId } = req.body;
 
-    if (!serialNumber || !cantidad) {
-        return res.status(400).json({ error: 'Faltan datos' });
+    if (!serialNumber || !cantidad || !sessionId) {
+        return res.status(400).json({ error: 'Faltan datos (ID, cantidad o pago)' });
     }
 
     try {
+        // 1. SEGURIDAD: Verificar el pago con Stripe
+        const session = await stripe.checkout.sessions.retrieve(sessionId);
+        
+        if (session.payment_status !== 'paid') {
+            return res.status(403).json({ error: 'El pago no se ha completado.' });
+        }
+
+        // 2. Conectar a Base de Datos
         let pool = await sql.connect(config);
 
-        // Usamos @cantidad en la consulta SQL en lugar de un "1" fijo
+        // 3. Sumar créditos
         const result = await pool.request()
             .input('id', sql.NVarChar, serialNumber)
-            .input('cantidad', sql.Int, cantidad) // Aquí definimos la variable
+            .input('cantidad', sql.Int, cantidad)
             .query(`
                 MERGE INTO Tarjetas AS Target
                 USING (SELECT @id AS ID) AS Source
@@ -49,7 +52,7 @@ export default async function handler(req, res) {
         return res.status(200).json({ success: true, nuevosCreditos });
 
     } catch (error) {
-        console.error('Error SQL:', error);
+        console.error('Error:', error);
         return res.status(500).json({ success: false, error: error.message });
     }
 }
