@@ -42,13 +42,12 @@
             transition: all 0.2s;
         }
 
-        .btn-credito:active {
+        .btn-credito:active, .btn-credito.seleccionado {
             background-color: #0070f3;
             color: white;
             transform: scale(0.98);
         }
         
-        /* Estilo para deshabilitar botones mientras lee */
         .btn-credito:disabled {
             background-color: #e0e0e0;
             border-color: #ccc;
@@ -65,6 +64,13 @@
             display: none;
         }
         
+        /* Input invisible para capturar el lector USB */
+        #usb-input {
+            opacity: 0;
+            position: absolute;
+            top: -1000px;
+        }
+        
         .loader { font-size: 2rem; }
     </style>
 </head>
@@ -73,7 +79,7 @@
     <div class="container">
         <h1>🍺</h1>
         <h3>Autoservicio de Bebidas</h3>
-        <p class="subtitle">Por favor seleccione una opción de recarga:</p>
+        <p class="subtitle">Seleccione una opción de recarga:</p>
 
         <div class="grid-botones">
             <button class="btn-credito" onclick="iniciarProceso(1)">1 Crédito</button>
@@ -85,76 +91,96 @@
         <div id="status-area">
             <div id="mensaje"></div>
         </div>
+        
+        <input type="text" id="usb-input" autocomplete="off">
     </div>
 
     <script>
-        // Variable global para controlar el lector (el interruptor)
         let nfcController; 
+        let cantidadSeleccionada = 0;
+        let modoUSB = false;
 
         const statusArea = document.getElementById('status-area');
         const mensaje = document.getElementById('mensaje');
         const botones = document.querySelectorAll('.btn-credito');
+        const usbInput = document.getElementById('usb-input');
 
         async function iniciarProceso(cantidad) {
-            // 1. Bloquear botones para que no pulsen otro mientras lee
+            cantidadSeleccionada = cantidad;
             toggleBotones(false);
+            
+            // Limpiamos input USB por si acaso
+            usbInput.value = ""; 
 
             statusArea.style.display = 'block';
             statusArea.style.backgroundColor = '#e3f2fd';
-            mensaje.innerHTML = `<span class="loader">📲</span><br><strong>Recargando ${cantidad} Créditos</strong><br>Acerca tu tarjeta NFC al móvil...`;
 
-            if (!("NDEFReader" in window)) {
-                mensaje.innerText = "❌ Error: Este navegador no soporta NFC. Usa Chrome en Android.";
-                statusArea.style.backgroundColor = '#ffcdd2';
-                toggleBotones(true);
-                return;
+            // 1. COMPROBACIÓN: ¿Es Android (NFC Nativo) o PC (USB)?
+            if ("NDEFReader" in window) {
+                // --- MODO ANDROID / MÓVIL ---
+                mensaje.innerHTML = `<span class="loader">📲</span><br><strong>Recargando ${cantidad} Créditos</strong><br>Acerca tarjeta al móvil...`;
+                activarModoMovil(cantidad);
+            } else {
+                // --- MODO PC / WINDOWS ---
+                modoUSB = true;
+                mensaje.innerHTML = `<span class="loader">💻</span><br><strong>Recargando ${cantidad} Créditos</strong><br>Pasa la tarjeta por el lector USB...`;
+                
+                // Ponemos el foco en el input invisible para que el lector escriba ahí
+                usbInput.focus();
             }
+        }
 
-            // 2. Si había un lector encendido antes (por error), lo apagamos
-            if (nfcController) {
-                nfcController.abort();
-            }
-            // Creamos un nuevo controlador para esta sesión
+        // --- LÓGICA PARA MÓVIL (Igual que antes) ---
+        async function activarModoMovil(cantidad) {
+            if (nfcController) nfcController.abort();
             nfcController = new AbortController();
 
             try {
                 const ndef = new NDEFReader();
-                
-                // 3. Activamos el lector pasando la señal del controlador
                 await ndef.scan({ signal: nfcController.signal });
 
                 ndef.onreading = async ({ serialNumber }) => {
-                    // 4. ¡AQUÍ ESTÁ LA CLAVE! 
-                    // En cuanto leemos UNA vez, cortamos el lector inmediatamente.
                     nfcController.abort(); 
-                    
                     mensaje.innerHTML = "🔄 Tarjeta detectada. Guardando...";
-                    
-                    // Procesamos el pago
                     await enviarDatos(serialNumber, cantidad);
                 };
-
             } catch (error) {
-                // Si el error es "AbortError" significa que lo apagamos nosotros (es bueno), así que lo ignoramos
-                if (error.name === 'AbortError') {
-                    return; 
-                }
-                mensaje.innerText = "❌ Error o Cancelado: " + error;
-                toggleBotones(true); // Reactivar botones si falló
+                if (error.name === 'AbortError') return;
+                mensaje.innerText = "❌ Error: " + error;
+                toggleBotones(true);
             }
         }
 
+        // --- LÓGICA PARA PC (Escuchar teclado/USB) ---
+        // El lector USB funciona escribiendo el código y pulsando ENTER
+        usbInput.addEventListener("keydown", async function(event) {
+            if (!modoUSB) return;
+
+            // Si el lector pulsa ENTER, significa que terminó de leer
+            if (event.key === "Enter") {
+                const codigoLeido = usbInput.value.trim(); // Cogemos lo que escribió el lector
+                if (codigoLeido.length > 0) {
+                    mensaje.innerHTML = "🔄 Tarjeta USB detectada. Guardando...";
+                    usbInput.blur(); // Quitamos foco para no leer doble
+                    await enviarDatos(codigoLeido, cantidadSeleccionada);
+                    modoUSB = false; // Apagamos modo USB
+                }
+            }
+        });
+        
+        // Mantener el foco en el input invisible si el usuario hace click fuera sin querer
+        document.addEventListener("click", function() {
+            if (modoUSB) usbInput.focus();
+        });
+
+        // --- ENVÍO DE DATOS (Común para ambos) ---
         async function enviarDatos(idTarjeta, cantidad) {
             try {
                 const res = await fetch('/api/scan', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ 
-                        serialNumber: idTarjeta, 
-                        cantidad: cantidad 
-                    })
+                    body: JSON.stringify({ serialNumber: idTarjeta, cantidad: cantidad })
                 });
-
                 const data = await res.json();
 
                 if (data.success) {
@@ -163,20 +189,17 @@
                 } else {
                     throw new Error(data.error);
                 }
-
             } catch (err) {
                 statusArea.style.backgroundColor = '#ffcdd2'; 
-                mensaje.innerText = "❌ Error guardando: " + err.message;
+                mensaje.innerText = "❌ Error: " + err.message;
             } finally {
-                // 5. Al terminar todo (bien o mal), reactivamos los botones
                 toggleBotones(true);
+                modoUSB = false;
             }
         }
 
         function toggleBotones(activar) {
-            botones.forEach(btn => {
-                btn.disabled = !activar;
-            });
+            botones.forEach(btn => btn.disabled = !activar);
         }
     </script>
 </body>
