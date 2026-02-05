@@ -6,70 +6,42 @@
     <title>Recarga de Bebidas</title>
     <style>
         body { 
-            font-family: 'Segoe UI', sans-serif; 
-            text-align: center; 
-            padding: 20px; 
-            background-color: #f4f4f9; 
-            color: #333;
+            font-family: 'Segoe UI', sans-serif; text-align: center; padding: 20px; 
+            background-color: #f4f4f9; color: #333;
         }
         .container { 
-            max-width: 500px; 
-            margin: 0 auto; 
-            background: white; 
-            padding: 30px; 
-            border-radius: 20px; 
+            max-width: 500px; margin: 0 auto; background: white; 
+            padding: 30px; border-radius: 20px; 
             box-shadow: 0 10px 25px rgba(0,0,0,0.1); 
         }
         h1 { font-size: 2.5rem; margin-bottom: 5px; }
         .subtitle { color: #666; margin-bottom: 30px; font-size: 1.1rem;}
         
         .grid-botones {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
-            margin-bottom: 20px;
+            display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;
         }
 
         .btn-credito {
-            background-color: #fff;
-            border: 2px solid #0070f3;
-            color: #0070f3;
-            padding: 20px;
-            font-size: 1.2rem;
-            font-weight: bold;
-            border-radius: 12px;
-            cursor: pointer;
-            transition: all 0.2s;
+            background-color: #fff; border: 2px solid #0070f3; color: #0070f3;
+            padding: 20px; font-size: 1.2rem; font-weight: bold;
+            border-radius: 12px; cursor: pointer; transition: all 0.2s;
         }
-
-        .btn-credito:active, .btn-credito.seleccionado {
-            background-color: #0070f3;
-            color: white;
-            transform: scale(0.98);
-        }
-        
-        .btn-credito:disabled {
-            background-color: #e0e0e0;
-            border-color: #ccc;
-            color: #999;
-            cursor: not-allowed;
-            transform: none;
-        }
+        .btn-credito:active { background-color: #0070f3; color: white; transform: scale(0.98); }
+        .btn-credito:disabled { background-color: #e0e0e0; border-color: #ccc; color: #999; cursor: not-allowed; }
 
         #status-area {
-            margin-top: 30px;
-            padding: 20px;
-            border-radius: 10px;
-            background-color: #eee;
-            display: none;
+            margin-top: 30px; padding: 20px; border-radius: 10px;
+            background-color: #eee; display: none;
         }
         
-        #usb-input {
-            opacity: 0;
-            position: absolute;
-            top: -1000px;
+        /* Tarjeta Pre-detectada (Modo iPhone) */
+        #user-badge {
+            background-color: #e3f2fd; color: #0d47a1; padding: 10px;
+            border-radius: 50px; display: inline-block; margin-bottom: 20px;
+            font-weight: bold; font-size: 0.9rem; display: none;
         }
-        
+
+        #usb-input { opacity: 0; position: absolute; top: -1000px; }
         .loader { font-size: 2rem; }
     </style>
 </head>
@@ -78,13 +50,16 @@
     <div class="container">
         <h1>🍺</h1>
         <h3>Autoservicio de Bebidas</h3>
-        <p class="subtitle">Seleccione una opción de recarga:</p>
+        
+        <div id="user-badge">👤 Tarjeta: <span id="badge-id">---</span></div>
+
+        <p class="subtitle" id="instrucciones">Seleccione una opción de recarga:</p>
 
         <div class="grid-botones">
-            <button class="btn-credito" onclick="iniciarProceso(1)">1 Crédito</button>
-            <button class="btn-credito" onclick="iniciarProceso(5)">5 Créditos</button>
-            <button class="btn-credito" onclick="iniciarProceso(10)">10 Créditos</button>
-            <button class="btn-credito" onclick="iniciarProceso(20)">20 Créditos</button>
+            <button class="btn-credito" onclick="procesarPago(1)">1 Crédito</button>
+            <button class="btn-credito" onclick="procesarPago(5)">5 Créditos</button>
+            <button class="btn-credito" onclick="procesarPago(10)">10 Créditos</button>
+            <button class="btn-credito" onclick="procesarPago(20)">20 Créditos</button>
         </div>
 
         <div id="status-area">
@@ -96,76 +71,81 @@
 
     <script>
         let nfcController; 
-        let cantidadSeleccionada = 0;
         let modoUSB = false;
+        let idPreCargado = null; // Aquí guardamos el ID si viene por URL (iPhone)
 
         const statusArea = document.getElementById('status-area');
         const mensaje = document.getElementById('mensaje');
         const botones = document.querySelectorAll('.btn-credito');
         const usbInput = document.getElementById('usb-input');
+        const userBadge = document.getElementById('user-badge');
+        const badgeId = document.getElementById('badge-id');
 
-        // --- FUNCIÓN MÁGICA DE CONVERSIÓN ---
-        // Convierte "4031034980" en "64:b6:44:f0"
+        // --- 1. AL CARGAR: REVISAR SI VENIMOS DE UN IPHONE (URL) ---
+        window.onload = () => {
+            const params = new URLSearchParams(window.location.search);
+            const idUrl = params.get('id');
+
+            if (idUrl) {
+                idPreCargado = idUrl;
+                userBadge.style.display = 'inline-block';
+                badgeId.innerText = idUrl;
+                document.getElementById('instrucciones').innerText = "Tarjeta detectada. Elija saldo para recargar:";
+            }
+        };
+
+        // --- CONVERSIÓN USB (Igual que antes) ---
         function convertirUsbAMovil(decimalStr) {
             try {
-                // 1. Convertir texto a número entero
-                let numero = BigInt(decimalStr); // Usamos BigInt por si el número es muy grande
-                
-                // 2. Convertir a Hexadecimal
+                let numero = BigInt(decimalStr);
                 let hex = numero.toString(16);
-                
-                // 3. Asegurar que tiene longitud par (rellenar con 0 a la izquierda si falta)
                 if (hex.length % 2 !== 0) hex = "0" + hex;
-
-                // 4. Separar en pares (bytes)
                 let pares = [];
-                for (let i = 0; i < hex.length; i += 2) {
-                    pares.push(hex.substring(i, i + 2));
-                }
-
-                // 5. Invertir el orden (La magia para que coincida)
-                pares.reverse();
-
-                // 6. Unir con dos puntos y devolver
-                return pares.join(':').toLowerCase();
-            } catch (e) {
-                console.error("Error convirtiendo formato USB:", e);
-                return decimalStr; // Si falla, devolvemos el original
-            }
+                for (let i = 0; i < hex.length; i += 2) pares.push(hex.substring(i, i + 2));
+                return pares.reverse().join(':').toLowerCase();
+            } catch (e) { return decimalStr; }
         }
 
-        async function iniciarProceso(cantidad) {
-            cantidadSeleccionada = cantidad;
+        // --- LÓGICA PRINCIPAL ---
+        async function procesarPago(cantidad) {
             toggleBotones(false);
-            
             usbInput.value = ""; 
-
             statusArea.style.display = 'block';
-            statusArea.style.backgroundColor = '#e3f2fd';
 
+            // CASO A: Ya tenemos el ID (iPhone o Link directo)
+            if (idPreCargado) {
+                statusArea.style.backgroundColor = '#e3f2fd';
+                mensaje.innerHTML = `<span class="loader">⚡</span><br>Añadiendo ${cantidad} créditos a<br><strong>${idPreCargado}</strong>...`;
+                // Pequeña pausa para que se vea la acción
+                setTimeout(() => enviarDatos(idPreCargado, cantidad), 500);
+                return;
+            }
+
+            // CASO B: No tenemos ID, hay que escanear (Android o PC)
+            statusArea.style.backgroundColor = '#e3f2fd';
+            
             if ("NDEFReader" in window) {
-                // MODO MÓVIL
+                // Android Nativo
                 mensaje.innerHTML = `<span class="loader">📲</span><br><strong>Recargando ${cantidad} Créditos</strong><br>Acerca tarjeta al móvil...`;
-                activarModoMovil(cantidad);
+                activarAndroidNFC(cantidad);
             } else {
-                // MODO PC
+                // PC / Windows
                 modoUSB = true;
                 mensaje.innerHTML = `<span class="loader">💻</span><br><strong>Recargando ${cantidad} Créditos</strong><br>Pasa la tarjeta por el lector USB...`;
                 usbInput.focus();
             }
         }
 
-        async function activarModoMovil(cantidad) {
+        async function activarAndroidNFC(cantidad) {
             if (nfcController) nfcController.abort();
             nfcController = new AbortController();
 
             try {
                 const ndef = new NDEFReader();
                 await ndef.scan({ signal: nfcController.signal });
-
                 ndef.onreading = async ({ serialNumber }) => {
                     nfcController.abort(); 
-                    mensaje.innerHTML = "🔄 Tarjeta detectada. Guardando...";
+                    mensaje.innerHTML = "🔄 Procesando...";
                     await enviarDatos(serialNumber, cantidad);
                 };
             } catch (error) {
@@ -175,33 +155,36 @@
             }
         }
 
-        // LÓGICA USB ACTUALIZADA
         usbInput.addEventListener("keydown", async function(event) {
-            if (!modoUSB) return;
-
-            if (event.key === "Enter") {
-                const codigoLeido = usbInput.value.trim();
-                
-                if (codigoLeido.length > 0) {
-                    mensaje.innerHTML = "🔄 Tarjeta USB detectada. Procesando...";
-                    usbInput.blur();
-                    
-                    // APLICAMOS LA CONVERSIÓN AQUÍ
-                    // Si son solo números y es largo, asumimos que es el formato decimal del lector USB
-                    let codigoFinal = codigoLeido;
-                    if (/^\d+$/.test(codigoLeido) && codigoLeido.length > 5) {
-                        codigoFinal = convertirUsbAMovil(codigoLeido);
-                        console.log(`Convertido ${codigoLeido} a ${codigoFinal}`);
-                    }
-
-                    await enviarDatos(codigoFinal, cantidadSeleccionada);
-                    modoUSB = false;
-                }
+            if (!modoUSB || event.key !== "Enter") return;
+            const codigo = usbInput.value.trim();
+            if (codigo.length > 0) {
+                usbInput.blur();
+                let finalId = codigo;
+                if (/^\d+$/.test(codigo) && codigo.length > 5) finalId = convertirUsbAMovil(codigo);
+                await enviarDatos(finalId, cantidad); // Nota: cantidad necesita ser global o pasada
+                modoUSB = false;
             }
         });
         
-        document.addEventListener("click", function() {
-            if (modoUSB) usbInput.focus();
+        // CORRECCIÓN PARA EL LECTOR USB (Variable cantidad)
+        // Como el listener del USB está fuera, necesitamos saber la cantidad seleccionada.
+        // Vamos a guardar la cantidad en una variable global temporalmente.
+        let cantidadPendiente = 0;
+        const _originalProcesar = procesarPago;
+        procesarPago = function(c) { cantidadPendiente = c; _originalProcesar(c); }
+
+        usbInput.addEventListener("keydown", async function(event) {
+             // (Reemplaza el listener anterior con este que usa cantidadPendiente)
+            if (!modoUSB || event.key !== "Enter") return;
+            const codigo = usbInput.value.trim();
+            if (codigo.length > 0) {
+                usbInput.blur();
+                let finalId = codigo;
+                if (/^\d+$/.test(codigo) && codigo.length > 5) finalId = convertirUsbAMovil(codigo);
+                await enviarDatos(finalId, cantidadPendiente);
+                modoUSB = false;
+            }
         });
 
         async function enviarDatos(idTarjeta, cantidad) {
@@ -212,25 +195,29 @@
                     body: JSON.stringify({ serialNumber: idTarjeta, cantidad: cantidad })
                 });
                 const data = await res.json();
-
                 if (data.success) {
                     statusArea.style.backgroundColor = '#c8e6c9'; 
                     mensaje.innerHTML = `✅ <strong>¡RECARGA EXITOSA!</strong><br>Tarjeta: ${idTarjeta}<br>+${cantidad} créditos.<br>Saldo Total: ${data.nuevosCreditos}`;
-                } else {
-                    throw new Error(data.error);
-                }
+                } else { throw new Error(data.error); }
             } catch (err) {
                 statusArea.style.backgroundColor = '#ffcdd2'; 
                 mensaje.innerText = "❌ Error: " + err.message;
             } finally {
-                toggleBotones(true);
-                modoUSB = false;
+                // Si venía pre-cargado (iPhone), no desbloqueamos botones para evitar confusiones, 
+                // o podemos recargar la página tras unos segundos.
+                setTimeout(() => {
+                    toggleBotones(true);
+                    modoUSB = false;
+                    // Opcional: Limpiar mensaje
+                }, 3000);
             }
         }
 
         function toggleBotones(activar) {
             botones.forEach(btn => btn.disabled = !activar);
         }
+        
+        document.addEventListener("click", () => { if(modoUSB) usbInput.focus(); });
     </script>
 </body>
 </html>
