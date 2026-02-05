@@ -2,6 +2,7 @@
   "name": "nfc-reader",
   "version": "1.0.0",
   "dependencies": {
-    "mssql": "^10.0.0"
+    "mssql": "^10.0.0",
+    "stripe": "^14.0.0" 
   }
 }
